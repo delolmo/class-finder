@@ -28,7 +28,7 @@
         "phpstan/phpstan-mockery": "^2.0",
         "phpstan/phpstan-phpunit": "^2.0",
         "phpstan/phpstan-strict-rules": "^2.0",
-        "phpunit/phpunit": "^11.5",
+        "phpunit/phpunit": "^12.4",
         "ramsey/conventional-commits": "^1.6",
         "rector/rector": "^2.0",
         "roave/security-advisories": "dev-latest",

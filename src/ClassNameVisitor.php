@@ -13,7 +13,7 @@ use PhpParser\NodeVisitorAbstract;
 
 use function trim;
 
-class ClassNameVisitor extends NodeVisitorAbstract
+final class ClassNameVisitor extends NodeVisitorAbstract
 {
     private string|null $namespace = null;
 

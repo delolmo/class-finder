@@ -24,7 +24,7 @@ final readonly class ClassFinder
         Parser|null $parser = null,
     ) {
         $this->finder = $finder ?? new Finder();
-        $this->parser = $parser ?? (new ParserFactory())->createForNewestSupportedVersion();
+        $this->parser = $parser ?? new ParserFactory()->createForNewestSupportedVersion();
     }
 
     /** @return list<class-string> */

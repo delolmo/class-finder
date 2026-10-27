@@ -20,7 +20,7 @@
         "issues": "https://github.com/delolmo/class-finder/issues"
     },
     "require": {
-        "php": "^8.4.27",
+        "php": "~8.4.27 || ^8.5.12",
         "nikic/php-parser": "^5.9",
         "symfony/finder": "^7.4 || ^8.0"
     },

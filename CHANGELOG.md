@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-27
+
 ### Security
 
 - Require PHP 8.4.27 or later, the release fixing CVE-2026-109618 and CVE-2026-109619.
@@ -29,5 +31,6 @@ All notable changes to this project are documented in this file. The format foll
 
 - Last release before this changelog.
 
-[Unreleased]: https://github.com/delolmo/class-finder/compare/2.0...HEAD
+[Unreleased]: https://github.com/delolmo/class-finder/compare/2.1.0...HEAD
+[2.1.0]: https://github.com/delolmo/class-finder/compare/2.0...2.1.0
 [2.0]: https://github.com/delolmo/class-finder/releases/tag/2.0

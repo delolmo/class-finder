@@ -2,280 +2,235 @@
 
 declare(strict_types=1);
 
-namespace DelOlmo\ClassFinder;
+namespace DelOlmo\ClassFinder\Tests;
 
-use ArrayIterator;
 use DateTimeInterface;
-use DelOlmo\ClassFinder\Fixtures\AbstractClass;
-use DelOlmo\ClassFinder\Fixtures\InterfaceFile;
-use DelOlmo\ClassFinder\Fixtures\ValidClass;
-use PhpParser\NodeVisitorAbstract;
+use DelOlmo\ClassFinder\ClassFinder;
+use DelOlmo\ClassFinder\ClassNameVisitor;
+use DelOlmo\ClassFinder\Tests\Fixtures\BaseClass;
+use DelOlmo\ClassFinder\Tests\Fixtures\ExtendsBaseClass;
+use DelOlmo\ClassFinder\Tests\Fixtures\ImplementsContract;
+use DelOlmo\ClassFinder\Tests\Fixtures\TestContract;
+use DelOlmo\ClassFinder\Tests\Fixtures\TwoClasses;
+use DelOlmo\ClassFinder\Tests\Fixtures\TwoClassesSibling;
+use DelOlmo\ClassFinder\Tests\Fixtures\ValidClass;
+use Override;
 use PhpParser\Parser;
 use PhpParser\ParserFactory;
+use PHPUnit\Framework\Assert;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\TestDox;
+use PHPUnit\Framework\Attributes\UsesClass;
 use PHPUnit\Framework\TestCase;
-use ReflectionClass;
-use Some\Random\Namespace\That\Does\Not\Match\Autoload\NonAutoloadableClass;
 use Symfony\Component\Finder\Finder;
-use Symfony\Component\Finder\SplFileInfo;
 
-use function file_get_contents;
-use function restore_error_handler;
-use function set_error_handler;
+use function chmod;
+use function file_put_contents;
+use function mkdir;
+use function rmdir;
+use function sys_get_temp_dir;
+use function uniqid;
+use function unlink;
 
+#[CoversClass(ClassFinder::class)]
+#[UsesClass(ClassNameVisitor::class)]
 final class ClassFinderTest extends TestCase
 {
-    public function testFindAllReturnsInstantiableClassesFromDirectory(): void
-    {
-        $classFinder = new ClassFinder();
+    private const string FIXTURES = __DIR__ . '/Fixtures';
 
-        $classes = $classFinder->findAll(__DIR__ . '/../src');
+    // The text of a valid class whose real declaration is autoloadable, so a
+    // copy of it in a scratch directory is reported as found.
+    private const string VALID_CLASS_SOURCE = <<<'PHP'
+        <?php
 
-        self::assertIsIterable($classes);
-        self::assertContains(ClassFinder::class, $classes);
-        self::assertContains(ClassNameVisitor::class, $classes);
-    }
+        namespace DelOlmo\ClassFinder\Tests\Fixtures;
 
-    public function testFindByClassNameReturnsSubclassesOnly(): void
-    {
-        $classFinder = new ClassFinder();
-
-        $classes = $classFinder->findByClassName(NodeVisitorAbstract::class, __DIR__ . '/../src');
-
-        self::assertIsIterable($classes);
-        self::assertContains(ClassNameVisitor::class, $classes);
-        self::assertNotContains(ClassFinder::class, $classes);
-    }
-
-    public function testFindAllExcludesNonInstantiableClasses(): void
-    {
-        $classFinder = new ClassFinder();
-
-        $classes = $classFinder->findAll(__DIR__ . '/../src');
-
-        foreach ($classes as $class) {
-            $reflection = new ReflectionClass($class);
-            self::assertTrue(
-                $reflection->isInstantiable(),
-                'Expected only instantiable classes, but found non-instantiable: ' . $class,
-            );
-            self::assertFalse(
-                $reflection->isAbstract(),
-                'Expected only instantiable classes, but found abstract: ' . $class,
-            );
-            self::assertFalse(
-                $reflection->isInterface(),
-                'Expected only instantiable classes, but found interface: ' . $class,
-            );
+        final class ValidClass
+        {
         }
+        PHP;
+
+    private string $scratch;
+
+    /** @var list<string> */
+    private array $scratchFiles = [];
+
+    #[Override]
+    protected function setUp(): void
+    {
+        $this->scratch = sys_get_temp_dir() . '/class-finder-' . uniqid();
+
+        mkdir($this->scratch);
     }
 
-    public function testFindByClassNameReturnsEmptyListWhenNoSubclassesFound(): void
+    #[Override]
+    protected function tearDown(): void
+    {
+        foreach ($this->scratchFiles as $scratchFile) {
+            chmod($scratchFile, 0o644);
+            unlink($scratchFile);
+        }
+
+        rmdir($this->scratch);
+    }
+
+    #[TestDox('findAll() returns every instantiable, autoloadable class, several per file included')]
+    public function testFindAllReturnsInstantiableAutoloadableClasses(): void
+    {
+        $classes = new ClassFinder()->findAll(self::FIXTURES);
+
+        Assert::assertEqualsCanonicalizing([
+            ExtendsBaseClass::class,
+            ImplementsContract::class,
+            TwoClasses::class,
+            TwoClassesSibling::class,
+            ValidClass::class,
+        ], $classes);
+    }
+
+    #[TestDox('findAll() searches only the directory of the call, not those of earlier calls')]
+    public function testFindAllSearchesOnlyTheGivenDirectoryOnRepeatedCalls(): void
     {
         $classFinder = new ClassFinder();
 
-        $classes = $classFinder->findByClassName(DateTimeInterface::class, __DIR__ . '/../src');
+        $classFinder->findAll(self::FIXTURES);
 
-        self::assertIsIterable($classes);
-        self::assertEmpty($classes);
+        $classes = $classFinder->findAll(__DIR__ . '/../src');
+
+        Assert::assertEqualsCanonicalizing([
+            ClassFinder::class,
+            ClassNameVisitor::class,
+        ], $classes);
     }
 
-    public function testFindAllSkipsNonAutoloadableClasses(): void
+    #[TestDox('findAll() keeps the filters of the Finder it was given')]
+    public function testFindAllKeepsTemplateFinderFilters(): void
     {
-        $classFinder = new ClassFinder();
+        $finder = new Finder()->notName('TwoClasses.php');
 
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
+        $classes = new ClassFinder($finder)->findAll(self::FIXTURES);
 
-        self::assertIsIterable($classes);
-        self::assertNotContains(
-            NonAutoloadableClass::class,
-            $classes,
-        );
+        Assert::assertNotContains(TwoClasses::class, $classes);
+        Assert::assertContains(ValidClass::class, $classes);
     }
 
-    public function testFindAllSkipsAbstractClasses(): void
+    #[TestDox('findAll() skips a file that does not parse and goes on with the next')]
+    public function testFindAllSkipsFilesThatDoNotParse(): void
     {
-        $classFinder = new ClassFinder();
+        $this->writeScratchFile('a-broken.php', '<?php final class {');
+        $this->writeScratchFile('b-valid.php', self::VALID_CLASS_SOURCE);
 
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
+        $classes = new ClassFinder(new Finder()->sortByName())->findAll($this->scratch);
 
-        self::assertIsIterable($classes);
-        self::assertNotContains(AbstractClass::class, $classes);
+        Assert::assertSame([ValidClass::class], $classes);
     }
 
-    public function testFindAllSkipsInterfaces(): void
+    #[TestDox('findAll() skips a file that cannot be read and goes on with the next')]
+    public function testFindAllSkipsFilesThatCannotBeRead(): void
     {
-        $classFinder = new ClassFinder();
+        chmod($this->writeScratchFile('a-unreadable.php', self::VALID_CLASS_SOURCE), 0o000);
+        $this->writeScratchFile('b-valid.php', self::VALID_CLASS_SOURCE);
 
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
+        $classes = new ClassFinder(new Finder()->sortByName())->findAll($this->scratch);
 
-        self::assertIsIterable($classes);
-        self::assertNotContains(InterfaceFile::class, $classes);
+        Assert::assertSame([ValidClass::class], $classes);
     }
 
-    public function testFindAllIncludesValidInstantiableClasses(): void
+    #[TestDox('findAll() reads only files with a .php extension')]
+    public function testFindAllIgnoresFilesWithoutPhpExtension(): void
     {
-        $classFinder = new ClassFinder();
+        $this->writeScratchFile('valid.txt', self::VALID_CLASS_SOURCE);
 
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
+        $classes = new ClassFinder()->findAll($this->scratch);
 
-        self::assertIsIterable($classes);
-        self::assertContains(ValidClass::class, $classes);
+        Assert::assertSame([], $classes);
     }
 
-    public function testFindAllSkipsFilesWhenGetRealPathReturnsFalse(): void
+    #[TestDox('findAll() skips a file the parser returns no statements for and goes on with the next')]
+    public function testFindAllSkipsFilesWithoutStatements(): void
     {
-        $file = $this->createMock(SplFileInfo::class);
-        $file->method('getRealPath')->willReturn(false);
+        // Both files are empty: only the injected parser's statements for the
+        // second one can yield a class.
+        $this->writeScratchFile('a-empty.php', '');
+        $this->writeScratchFile('b-empty.php', '');
 
-        $finder = $this->createMock(Finder::class);
-        $finder->method('files')->willReturnSelf();
-        $finder->method('in')->willReturnSelf();
-        $finder->method('name')->willReturnSelf();
-        $finder->method('getIterator')->willReturn(new ArrayIterator([$file]));
+        $statements = new ParserFactory()->createForNewestSupportedVersion()->parse(self::VALID_CLASS_SOURCE);
 
-        $classFinder = new ClassFinder($finder);
+        $parser = self::createStub(Parser::class);
+        $parser->method('parse')->willReturn(null, $statements);
 
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
+        $classes = new ClassFinder(new Finder()->sortByName(), $parser)->findAll($this->scratch);
 
-        self::assertIsIterable($classes);
-        self::assertEmpty($classes);
+        Assert::assertSame([ValidClass::class], $classes);
     }
 
-    public function testFindAllSkipsFilesWhenParserReturnsNull(): void
+    /** @param non-empty-string $skippedDeclaration */
+    #[DataProvider('skippedDeclarationProvider')]
+    #[TestDox('findAll() skips $_dataName and goes on with the next class of the file')]
+    public function testFindAllSkipsClassesAndGoesOnWithTheFile(string $skippedDeclaration): void
     {
-        $file = $this->createMock(SplFileInfo::class);
-        $file->method('getRealPath')->willReturn(__DIR__ . '/Fixtures/ValidClass.php');
+        $this->writeScratchFile('classes.php', <<<PHP
+            <?php
 
-        $finder = $this->createMock(Finder::class);
-        $finder->method('files')->willReturnSelf();
-        $finder->method('in')->willReturnSelf();
-        $finder->method('name')->willReturnSelf();
-        $finder->method('getIterator')->willReturn(new ArrayIterator([$file]));
+            namespace DelOlmo\ClassFinder\Tests\Fixtures;
 
-        $parser = $this->createMock(Parser::class);
-        $parser->method('parse')->willReturn(null);
+            {$skippedDeclaration}
 
-        $classFinder = new ClassFinder($finder, $parser);
+            final class ValidClass
+            {
+            }
+            PHP);
 
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
+        $classes = new ClassFinder()->findAll($this->scratch);
 
-        self::assertIsIterable($classes);
-        self::assertEmpty($classes);
+        Assert::assertSame([ValidClass::class], $classes);
     }
 
-    public function testFindAllSkipsFilesWhenFileGetContentsReturnsFalse(): void
+    /** @return iterable<string, array{non-empty-string}> */
+    public static function skippedDeclarationProvider(): iterable
     {
-        $file = $this->createMock(SplFileInfo::class);
-        $file->method('getRealPath')->willReturn('/path/to/nonexistent/file.php');
+        yield 'a class that does not autoload' => ['final class DoesNotExist {}'];
 
-        $finder = $this->createMock(Finder::class);
-        $finder->method('files')->willReturnSelf();
-        $finder->method('in')->willReturnSelf();
-        $finder->method('name')->willReturnSelf();
-        $finder->method('getIterator')->willReturn(new ArrayIterator([$file]));
-
-        $classFinder = new ClassFinder($finder);
-
-        set_error_handler(static fn (): bool => true);
-
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
-
-        restore_error_handler();
-
-        self::assertIsIterable($classes);
-        self::assertEmpty($classes);
+        yield 'a class that is not instantiable' => ['abstract class BaseClass {}'];
     }
 
-    public function testFindAllContinuesProcessingAfterGetRealPathFailure(): void
+    /**
+     * @param class-string       $className
+     * @param list<class-string> $expected
+     */
+    #[DataProvider('subclassProvider')]
+    #[TestDox('findByClassName() returns the subclasses and implementations of $className')]
+    public function testFindByClassNameReturnsSubclassesAndImplementations(string $className, array $expected): void
     {
-        $failingFile = $this->createMock(SplFileInfo::class);
-        $failingFile->method('getRealPath')->willReturn(false);
+        $classes = new ClassFinder(new Finder()->sortByName())->findByClassName($className, self::FIXTURES);
 
-        $validFile = $this->createMock(SplFileInfo::class);
-        $validFile->method('getRealPath')->willReturn(__DIR__ . '/Fixtures/ValidClass.php');
-
-        $finder = $this->createMock(Finder::class);
-        $finder->method('files')->willReturnSelf();
-        $finder->method('in')->willReturnSelf();
-        $finder->method('name')->willReturnSelf();
-        $finder->method('getIterator')->willReturn(new ArrayIterator([$failingFile, $validFile]));
-
-        $classFinder = new ClassFinder($finder);
-
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
-
-        self::assertIsIterable($classes);
-        self::assertContains(ValidClass::class, $classes);
+        Assert::assertSame($expected, $classes);
     }
 
-    public function testFindAllContinuesProcessingAfterFileGetContentsFailure(): void
+    /** @return iterable<string, array{class-string, list<class-string>}> */
+    public static function subclassProvider(): iterable
     {
-        $failingFile = $this->createMock(SplFileInfo::class);
-        $failingFile->method('getRealPath')->willReturn('/path/to/nonexistent/file.php');
+        yield 'abstract parent' => [BaseClass::class, [ExtendsBaseClass::class]];
 
-        $validFile = $this->createMock(SplFileInfo::class);
-        $validFile->method('getRealPath')->willReturn(__DIR__ . '/Fixtures/ValidClass.php');
+        yield 'interface' => [
+            TestContract::class,
+            [ExtendsBaseClass::class, ImplementsContract::class, TwoClassesSibling::class],
+        ];
 
-        $finder = $this->createMock(Finder::class);
-        $finder->method('files')->willReturnSelf();
-        $finder->method('in')->willReturnSelf();
-        $finder->method('name')->willReturnSelf();
-        $finder->method('getIterator')->willReturn(new ArrayIterator([$failingFile, $validFile]));
+        yield 'unrelated type' => [DateTimeInterface::class, []];
 
-        $classFinder = new ClassFinder($finder);
-
-        set_error_handler(static fn (): bool => true);
-
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
-
-        restore_error_handler();
-
-        self::assertIsIterable($classes);
-        self::assertContains(ValidClass::class, $classes);
+        yield 'the class itself' => [ValidClass::class, []];
     }
 
-    public function testFindAllContinuesProcessingAfterParserReturnsNull(): void
+    private function writeScratchFile(string $name, string $contents): string
     {
-        $file1 = $this->createMock(SplFileInfo::class);
-        $file1->method('getRealPath')->willReturn(__DIR__ . '/Fixtures/ValidClass.php');
+        $path = $this->scratch . '/' . $name;
 
-        $file2 = $this->createMock(SplFileInfo::class);
-        $file2->method('getRealPath')->willReturn(__DIR__ . '/Fixtures/BaseClass.php');
+        file_put_contents($path, $contents);
 
-        $finder = $this->createMock(Finder::class);
-        $finder->method('files')->willReturnSelf();
-        $finder->method('in')->willReturnSelf();
-        $finder->method('name')->willReturnSelf();
-        $finder->method('getIterator')->willReturn(new ArrayIterator([$file1, $file2]));
+        $this->scratchFiles[] = $path;
 
-        $validAst = new ParserFactory()
-            ->createForNewestSupportedVersion()
-            ->parse(file_get_contents(__DIR__ . '/Fixtures/ValidClass.php'));
-
-        $parser = $this->createMock(Parser::class);
-        $parser->method('parse')->willReturnOnConsecutiveCalls(null, $validAst);
-
-        $classFinder = new ClassFinder($finder, $parser);
-
-        $classes = $classFinder->findAll(__DIR__ . '/Fixtures');
-
-        self::assertIsIterable($classes);
-        self::assertCount(1, $classes);
-        self::assertContains(ValidClass::class, $classes);
-    }
-
-    public function testFindByClassNameContinuesProcessingAfterNonSubclass(): void
-    {
-        $classFinder = new ClassFinder();
-
-        $classes = [...$classFinder->findByClassName(NodeVisitorAbstract::class, __DIR__ . '/Fixtures')];
-
-        self::assertIsIterable($classes);
-        self::assertEmpty($classes, 'Fixtures should have no NodeVisitorAbstract subclasses');
-
-        $classesFromSrc = [...$classFinder->findByClassName(NodeVisitorAbstract::class, __DIR__ . '/../src')];
-
-        self::assertNotEmpty($classesFromSrc);
-        self::assertContains(ClassNameVisitor::class, $classesFromSrc);
+        return $path;
     }
 }

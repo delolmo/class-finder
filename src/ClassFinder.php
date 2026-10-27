@@ -8,17 +8,23 @@ use PhpParser\NodeTraverser;
 use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use ReflectionClass;
+use RuntimeException;
 use Symfony\Component\Finder\Finder;
 
 use function class_exists;
-use function file_get_contents;
+use function is_subclass_of;
 
+/**
+ * Lists the instantiable, autoloadable classes declared in the PHP files of a
+ * directory. Checking that a class is autoloadable loads its file.
+ */
 final readonly class ClassFinder
 {
     private Finder $finder;
 
     private Parser $parser;
 
+    /** @param Finder|null $finder A template: every search runs on a fresh copy, keeping its filters. */
     public function __construct(
         Finder|null $finder = null,
         Parser|null $parser = null,
@@ -27,55 +33,49 @@ final readonly class ClassFinder
         $this->parser = $parser ?? new ParserFactory()->createForNewestSupportedVersion();
     }
 
-    /** @return list<class-string> */
-    public function findAll(string $directory): iterable
+    /**
+     * Files that cannot be read or parsed are skipped.
+     *
+     * @return list<class-string>
+     */
+    public function findAll(string $directory): array
     {
-        $finder = $this->finder;
+        // Finder accumulates the directories it is given; a copy keeps one
+        // search from leaking into the next.
+        $finder = clone $this->finder;
 
         $finder->files()->in($directory)->name('*.php');
 
         $classes = [];
 
         foreach ($finder as $file) {
-            $filePath = $file->getRealPath();
-
-            if ($filePath === false) {
+            try {
+                $statements = $this->parser->parse($file->getContents());
+            } catch (RuntimeException) {
+                // The parser's Error is a RuntimeException too.
                 continue;
             }
-
-            $fileContents = file_get_contents($filePath);
-
-            if ($fileContents === false) {
-                continue;
-            }
-
-            $statements = $this->parser->parse($fileContents);
 
             if ($statements === null) {
                 continue;
             }
 
-            $traverser = new NodeTraverser();
-            $visitor   = new ClassNameVisitor();
-            $traverser->addVisitor($visitor);
+            $visitor = new ClassNameVisitor();
+
+            $traverser = new NodeTraverser($visitor);
             $traverser->traverse($statements);
 
-            $className = $visitor->getClassName();
+            foreach ($visitor->getClassNames() as $className) {
+                if (! class_exists($className)) {
+                    continue;
+                }
 
-            if (! class_exists($className)) {
-                continue;
+                if (! new ReflectionClass($className)->isInstantiable()) {
+                    continue;
+                }
+
+                $classes[] = $className;
             }
-
-            $reflClass = new ReflectionClass($className);
-
-            if (! $reflClass->isInstantiable()) {
-                continue;
-            }
-
-            /** @var class-string $objectClass */
-            $objectClass = $className;
-
-            $classes[] = $objectClass;
         }
 
         return $classes;
@@ -88,23 +88,16 @@ final readonly class ClassFinder
      *
      * @template TObject of object
      */
-    public function findByClassName(string $className, string $directory): iterable
+    public function findByClassName(string $className, string $directory): array
     {
-        $list = $this->findAll($directory);
-
         $classes = [];
 
-        foreach ($list as $fileClassName) {
-            $reflClass = new ReflectionClass($fileClassName);
-
-            if (! $reflClass->isSubclassOf($className)) {
+        foreach ($this->findAll($directory) as $fileClassName) {
+            if (! is_subclass_of($fileClassName, $className, true)) {
                 continue;
             }
 
-            /** @var class-string<TObject> $objectClassName */
-            $objectClassName = $fileClassName;
-
-            $classes[] = $objectClassName;
+            $classes[] = $fileClassName;
         }
 
         return $classes;

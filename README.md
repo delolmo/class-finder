@@ -7,7 +7,7 @@ Find the instantiable classes declared in a directory, optionally narrowed to th
 
 ## Requirements
 
-* PHP ^8.4.27
+* PHP ~8.4.27 || ^8.5.12
 
 ## Installation
 

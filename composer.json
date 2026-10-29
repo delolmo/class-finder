@@ -1,13 +1,17 @@
 {
     "name": "delolmo/class-finder",
-    "description": "Find classes within a specific directory",
+    "description": "Find the instantiable PHP classes in a directory, optionally filtered by parent class or interface.",
     "license": "MIT",
     "type": "library",
     "keywords": [
         "class",
         "finder",
+        "class-finder",
+        "class-discovery",
         "discovery",
-        "php-parser"
+        "reflection",
+        "php-parser",
+        "autoload"
     ],
     "authors": [
         {

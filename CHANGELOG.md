@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-10-29
+
+### Changed
+
+- The package description and keywords say more precisely what the finder does, so it is easier to find on Packagist.
+
 ## [2.1.1] - 2026-10-27
 
 ### Changed
@@ -38,6 +44,7 @@ All notable changes to this project are documented in this file. The format foll
 
 - Last release before this changelog.
 
-[Unreleased]: https://github.com/delolmo/class-finder/compare/2.1.1...HEAD
+[Unreleased]: https://github.com/delolmo/class-finder/compare/2.1.2...HEAD
+[2.1.2]: https://github.com/delolmo/class-finder/compare/2.1.1...2.1.2
 [2.1.1]: https://github.com/delolmo/class-finder/compare/2.0...2.1.1
 [2.0]: https://github.com/delolmo/class-finder/releases/tag/2.0
